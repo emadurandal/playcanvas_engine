@@ -3,6 +3,8 @@ import { GSplatInstance } from '../../../scene/gsplat/gsplat-instance.js';
 import { Asset } from '../../asset/asset.js';
 import { AssetReference } from '../../asset/asset-reference.js';
 import { Component } from '../component.js';
+import { Debug } from '../../../core/debug.js';
+import { GSplatPlacement } from '../../../scene/gsplat/unified/gsplat-placement.js';
 
 /**
  * @import { BoundingBox } from '../../../core/shape/bounding-box.js'
@@ -56,10 +58,19 @@ class GSplatComponent extends Component {
     _instance = null;
 
     /**
+     * @type {GSplatPlacement|null}
+     * @private
+     */
+    _placement = null;
+
+    /**
      * @type {ShaderMaterial|null}
      * @private
      */
     _materialTmp = null;
+
+    /** @private */
+    _highQualitySH = true;
 
     /**
      * @type {BoundingBox|null}
@@ -93,6 +104,14 @@ class GSplatComponent extends Component {
 
     /** @private */
     _castShadows = false;
+
+    /**
+     * Whether to use the unified gsplat rendering.
+     *
+     * @type {boolean}
+     * @private
+     */
+    _unified = false;
 
     /**
      * Create a new GSplatComponent.
@@ -153,6 +172,8 @@ class GSplatComponent extends Component {
      */
     set instance(value) {
 
+        Debug.assert(!this.unified);
+
         // destroy existing instance
         this.destroyInstance();
 
@@ -190,6 +211,9 @@ class GSplatComponent extends Component {
      * @param {ShaderMaterial} value - The material instance.
      */
     set material(value) {
+
+        Debug.assert(!this.unified);
+
         if (this._instance) {
             this._instance.material = value;
         } else {
@@ -204,6 +228,35 @@ class GSplatComponent extends Component {
      */
     get material() {
         return this._instance?.material ?? this._materialTmp ?? null;
+    }
+
+    /**
+     * Sets whether to use the high quality or the approximate (but fast) spherical-harmonic calculation when rendering SOGS data.
+     *
+     * The low quality approximation evaluates the scene's spherical harmonic contributions
+     * along the camera's Z-axis instead of using each gaussian's view vector. This results
+     * in gaussians being accurate at the center of the screen and becoming less accurate
+     * as they appear further from the center. This is a good trade-off for performance
+     * when rendering large SOGS datasets, especially on mobile devices.
+     *
+     * Defaults to false.
+     *
+     * @type {boolean}
+     */
+    set highQualitySH(value) {
+        if (value !== this._highQualitySH) {
+            this._highQualitySH = value;
+            this._instance?.setHighQualitySH(value);
+        }
+    }
+
+    /**
+     * Gets whether the high quality (true) or the fast approximate (false) spherical-harmonic calculation is used when rendering SOGS data.
+     *
+     * @type {boolean}
+     */
+    get highQualitySH() {
+        return this._highQualitySH;
     }
 
     /**
@@ -253,6 +306,31 @@ class GSplatComponent extends Component {
      */
     get castShadows() {
         return this._castShadows;
+    }
+
+    /**
+     * Sets whether to use the unified gsplat rendering. Can be changed only when the component is
+     * not enabled. Default is false.
+     *
+     * @type {boolean}
+     */
+    set unified(value) {
+
+        if (this.enabled && this.entity.enabled) {
+            Debug.warn('GSplatComponent#unified can be changed only when the component is not enabled. Ignoring change.');
+            return;
+        }
+
+        this._unified = value;
+    }
+
+    /**
+     * Gets whether to use the unified gsplat rendering.
+     *
+     * @type {boolean}
+     */
+    get unified() {
+        return this._unified;
     }
 
     /**
@@ -322,6 +400,12 @@ class GSplatComponent extends Component {
 
     /** @private */
     destroyInstance() {
+
+        if (this._placement) {
+            this.removeFromLayers();
+            this._placement = null;
+        }
+
         if (this._instance) {
             this.removeFromLayers();
             this._instance?.destroy();
@@ -331,6 +415,15 @@ class GSplatComponent extends Component {
 
     /** @private */
     addToLayers() {
+
+        if (this._placement) {
+            const layers = this.system.app.scene.layers;
+            for (let i = 0; i < this._layers.length; i++) {
+                layers.getLayerById(this._layers[i])?.addGSplatPlacement(this._placement);
+            }
+            return;
+        }
+
         const meshInstance = this.instance?.meshInstance;
         if (meshInstance) {
             const layers = this.system.app.scene.layers;
@@ -341,6 +434,15 @@ class GSplatComponent extends Component {
     }
 
     removeFromLayers() {
+
+        if (this._placement) {
+            const layers = this.system.app.scene.layers;
+            for (let i = 0; i < this._layers.length; i++) {
+                layers.getLayerById(this._layers[i])?.removeGSplatPlacement(this._placement);
+            }
+            return;
+        }
+
         const meshInstance = this.instance?.meshInstance;
         if (meshInstance) {
             const layers = this.system.app.scene.layers;
@@ -357,8 +459,10 @@ class GSplatComponent extends Component {
 
     /** @private */
     onInsertChild() {
-        if (this._instance && this.enabled && this.entity.enabled) {
-            this.addToLayers();
+        if (this.enabled && this.entity.enabled) {
+            if (this._instance || this._placement) {
+                this.addToLayers();
+            }
         }
     }
 
@@ -386,6 +490,8 @@ class GSplatComponent extends Component {
         if (this._instance) {
             layer.addMeshInstances(this._instance.meshInstance);
         }
+
+        Debug.assert(!this.unified);
     }
 
     onLayerRemoved(layer) {
@@ -394,6 +500,8 @@ class GSplatComponent extends Component {
         if (this._instance) {
             layer.removeMeshInstances(this._instance.meshInstance);
         }
+
+        Debug.assert(!this.unified);
     }
 
     onEnable() {
@@ -407,7 +515,7 @@ class GSplatComponent extends Component {
             this._evtLayerRemoved = layers.on('remove', this.onLayerRemoved, this);
         }
 
-        if (this._instance) {
+        if (this._instance || this._placement) {
             this.addToLayers();
         } else if (this.asset) {
             this._onGSplatAssetAdded();
@@ -466,12 +574,30 @@ class GSplatComponent extends Component {
         // remove existing instance
         this.destroyInstance();
 
-        // create new instance
         const asset = this._assetReference.asset;
+
+        if (this.unified) {
+
+            this._placement = null;
+
+            if (asset) {
+                this._placement = new GSplatPlacement(asset.resource, this.entity);
+            }
+
+        } else {
+
+            // create new instance
+            if (asset) {
+                this.instance = new GSplatInstance(asset.resource, {
+                    material: this._materialTmp,
+                    highQualitySH: this._highQualitySH
+                });
+                this._materialTmp = null;
+            }
+        }
+
         if (asset) {
-            this.instance = new GSplatInstance(asset.resource, this._materialTmp);
-            this._materialTmp = null;
-            this.customAabb = this.instance.resource.aabb.clone();
+            this.customAabb = asset.resource.aabb.clone();
         }
     }
 

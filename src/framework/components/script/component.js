@@ -741,10 +741,10 @@ class ScriptComponent extends Component {
                 }
 
                 // If the script is not a ScriptType then we must store attribute data on the component
-                if (!(scriptInstance instanceof ScriptType)) {
+                if (!(scriptInstance instanceof ScriptType) && args.attributes) {
 
                     // Store the Attribute data
-                    this._attributeDataMap.set(scriptName, args.attributes);
+                    this._attributeDataMap.set(scriptName, { ...args.attributes });
 
                 }
 
@@ -969,7 +969,7 @@ class ScriptComponent extends Component {
             // otherwise it means that the attributes have already been initialized
             // so convert the new guid to an entity
             // and put it in the new attributes
-            const newAttributesRaw = newScriptComponent[scriptName].__attributesRaw;
+            const newAttributesRaw = newScriptComponent[scriptName].__attributesRaw ?? newScriptComponent._attributeDataMap.get(scriptName);
             const newAttributes = newScriptComponent[scriptName].__attributes;
             if (!newAttributesRaw && !newAttributes) {
                 continue;
@@ -979,14 +979,15 @@ class ScriptComponent extends Component {
             const useGuid = !!newAttributesRaw;
 
             // get the old script attributes from the instance
-            const oldAttributes = script.instance.__attributes;
+            const oldAttributes = script.instance.__attributes ?? newScriptComponent._attributeDataMap.get(scriptName);
             for (const attributeName in oldAttributes) {
                 if (!oldAttributes[attributeName]) {
                     continue;
                 }
 
                 // get the attribute definition from the script type
-                const attribute = scriptType.attributes.get(attributeName);
+                const attribute = scriptType.attributes?.get(attributeName) ??
+                    this.system.app.scripts.getSchema(scriptName)?.attributes?.[attributeName];
                 if (!attribute) {
                     continue;
                 }
