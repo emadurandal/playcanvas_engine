@@ -36,8 +36,6 @@ const frame = new InputFrame({
     rotate: [0, 0, 0]
 });
 
-const ZOOM_SCALE_MULT = 10;
-
 /**
  * Calculate the damp rate.
  *
@@ -160,7 +158,7 @@ class CameraControls extends Script {
      * @type {Vec2}
      * @private
      */
-    _zoomRange = new Vec2();
+    _zoomRange = new Vec2(0.01, 0);
 
     /**
      * @type {KeyboardMouseSource}
@@ -315,7 +313,7 @@ class CameraControls extends Script {
      * @title Zoom Speed
      * @type {number}
      */
-    zoomSpeed = 0.005;
+    zoomSpeed = 0.001;
 
     /**
      * The touch zoom pinch sensitivity.
@@ -325,15 +323,6 @@ class CameraControls extends Script {
      * @type {number}
      */
     zoomPinchSens = 5;
-
-    /**
-     * The minimum scale the camera can zoom (absolute value).
-     *
-     * @attribute
-     * @title Zoom Scale Min
-     * @type {number}
-     */
-    zoomScaleMin = 0.001;
 
     /**
      * The gamepad dead zone.
@@ -354,7 +343,8 @@ class CameraControls extends Script {
      */
     joystickEventName = 'joystick';
 
-    initialize() {
+    constructor({ app, entity, ...args }) {
+        super({ app, entity, ...args });
         if (!this.entity.camera) {
             console.error('CameraControls: camera component not found');
             return;
@@ -362,7 +352,7 @@ class CameraControls extends Script {
         this._camera = this.entity.camera;
 
         // set orbit controller defaults
-        this._orbitController.zoomRange = new Vec2(0, Infinity);
+        this._orbitController.zoomRange = new Vec2(0.01, Infinity);
 
         // attach input
         this._desktopInput.attach(this.app.graphicsDevice.canvas);
@@ -385,20 +375,13 @@ class CameraControls extends Script {
         });
 
         // pose
-        const position = this._camera.entity.getPosition();
-        const focus = this._camera.entity.getRotation()
-        .transformVector(Vec3.FORWARD, tmpV1)
-        .mulScalar(this._pose.distance)
-        .add(position);
-        this._pose.look(position, focus);
+        this._pose.look(this._camera.entity.getPosition(), Vec3.ZERO);
 
         // mode
         this._setMode('orbit');
 
         // destroy
         this.on('destroy', this._destroy, this);
-
-        console.log('CameraControls: initialized');
     }
 
     /**
@@ -407,6 +390,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Enable Orbit
      * @type {boolean}
+     * @default true
      */
     set enableOrbit(enable) {
         this._enableOrbit = enable;
@@ -426,6 +410,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Enable Fly
      * @type {boolean}
+     * @default true
      */
     set enableFly(enable) {
         this._enableFly = enable;
@@ -445,6 +430,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Focus Point
      * @type {Vec3}
+     * @default [0, 0, 0]
      */
     set focusPoint(point) {
         const position = this._camera.entity.getPosition();
@@ -463,6 +449,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Rotate Damping
      * @type {number}
+     * @default 0.98
      */
     set focusDamping(damping) {
         this._focusController.focusDamping = damping;
@@ -479,6 +466,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Rotate Damping
      * @type {number}
+     * @default 0.98
      */
     set rotateDamping(damping) {
         this._flyController.rotateDamping = damping;
@@ -496,6 +484,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Move Damping
      * @type {number}
+     * @default 0.98
      */
     set moveDamping(damping) {
         this._flyController.moveDamping = damping;
@@ -512,6 +501,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Zoom Damping
      * @type {number}
+     * @default 0.98
      */
     set zoomDamping(damping) {
         this._orbitController.zoomDamping = damping;
@@ -528,6 +518,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Pitch Range
      * @type {Vec2}
+     * @default [-360, 360]
      */
     set pitchRange(range) {
         this._pitchRange.x = math.clamp(range.x, -360, 360);
@@ -547,6 +538,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Yaw Range
      * @type {Vec2}
+     * @default [-360, 360]
      */
     set yawRange(range) {
         this._yawRange.x = math.clamp(range.x, -360, 360);
@@ -565,6 +557,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Zoom Range
      * @type {Vec2}
+     * @default [0.01, 0]
      */
     set zoomRange(range) {
         this._zoomRange.x = range.x;
@@ -589,6 +582,7 @@ class CameraControls extends Script {
      * @attribute
      * @title Use Virtual Gamepad
      * @type {string}
+     * @default 'joystick-touch'
      */
     set mobileInputLayout(layout) {
         if (!/(?:joystick|touch)-(?:joystick|touch)/.test(layout)) {
@@ -748,11 +742,7 @@ class CameraControls extends Script {
         // multipliers
         const moveMult = (this._state.shift ? this.moveFastSpeed : this._state.ctrl ?
             this.moveSlowSpeed : this.moveSpeed) * this.sceneSize * dt;
-        const zoomMult = math.clamp(
-            this._pose.distance / (ZOOM_SCALE_MULT * this.sceneSize),
-            this.zoomScaleMin,
-            1
-        ) * this.zoomSpeed * this.sceneSize * 60 * dt;
+        const zoomMult = this.zoomSpeed * 60 * dt;
         const zoomTouchMult = zoomMult * this.zoomPinchSens;
         const rotateMult = this.rotateSpeed * 60 * dt;
         const rotateJoystickMult = this.rotateSpeed * this.rotateJoystickSens * 60 * dt;
